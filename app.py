@@ -229,27 +229,33 @@ def page(title: str, body: str, description: str = None, share_path: str = "/") 
   main {{ max-width: 760px; margin: 0 auto; padding: 28px 20px 60px; }}
   .hero-bg-wrap {{
     position: relative; border-radius: 20px; overflow: hidden;
-    min-height: 460px; margin-bottom: 30px;
-    background: #0e0a1c;
+    min-height: 560px; margin-bottom: 30px;
+    background: #08060f;
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 18px 54px rgba(30,18,70,0.22);
+    box-shadow: 0 18px 54px rgba(30,18,70,0.28);
     perspective: 1000px;   /* gives the tilt real 3D depth */
   }}
   .hero-video {{
     position: absolute; inset: 0; width: 100%; height: 100%;
-    object-fit: cover; z-index: 0;
+    object-fit: cover; z-index: 0; opacity: 0.55;
     transition: transform 0.5s cubic-bezier(.2,.7,.3,1);
+  }}
+  /* Ferrofluid sits above the video and screen-blends, so the glowing rims
+     add light on top of the footage instead of hiding it. */
+  .hero-ferro {{
+    position: absolute; inset: 0; z-index: 1; pointer-events: auto;
+    mix-blend-mode: screen; opacity: 0.95;
   }}
   /* Darkened + vignetted so light text reads cleanly on top */
   .hero-scrim {{
-    position: absolute; inset: 0; z-index: 1;
+    position: absolute; inset: 0; z-index: 2; pointer-events: none;
     background:
-      radial-gradient(ellipse at 50% 45%, rgba(10,6,25,0.10) 0%, rgba(10,6,25,0.62) 72%),
-      linear-gradient(180deg, rgba(10,6,25,0.30) 0%, rgba(10,6,25,0.55) 100%);
+      radial-gradient(ellipse at 50% 45%, rgba(8,5,18,0.05) 0%, rgba(8,5,18,0.66) 74%),
+      linear-gradient(180deg, rgba(8,5,18,0.28) 0%, rgba(8,5,18,0.60) 100%);
   }}
   .hero {{
-    position: relative; z-index: 2; text-align: center;
-    padding: 8px 30px 12px; margin: 26px; max-width: 470px;
+    position: relative; z-index: 3; text-align: center;
+    padding: 8px 30px 12px; margin: 26px; max-width: 520px;
     transform-style: preserve-3d;
     transition: transform 0.35s cubic-bezier(.2,.7,.3,1);
     will-change: transform;
@@ -287,9 +293,70 @@ def page(title: str, body: str, description: str = None, share_path: str = "/") 
   }}
   .hero-cta:hover {{ filter: brightness(1.1); box-shadow: 0 12px 34px rgba(140,70,240,0.6); }}
   .hero-hint {{
-    position: absolute; bottom: 12px; left: 0; right: 0; z-index: 2;
+    position: absolute; bottom: 12px; left: 0; right: 0; z-index: 3;
     text-align: center; font-size: 11px; letter-spacing: 0.4px;
     color: rgba(255,255,255,0.4); pointer-events: none;
+  }}
+
+  /* ── Seamless in-hero form ─────────────────────────────────────────
+     Instead of a solid card pasted onto the background, the inputs are
+     translucent panes that let the fluid show through — so the text,
+     the form and the background read as one surface. */
+  .hero-curved {{ margin-top: 22px; transform: translateZ(38px); }}
+  /* Before curved-input.js enhances it, this is a plain usable form —
+     so it still works if the script fails or JS is disabled. */
+  .hero-curved input {{
+    width: 100%; padding: 13px 15px; font-size: 15px; font-family: inherit; color: #fff;
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 12px;
+  }}
+  .hero-curved input::placeholder {{ color: rgba(255,255,255,0.5); }}
+  .hero-curved button {{
+    margin-top: 10px; width: 100%; padding: 13px; border: none; cursor: pointer;
+    font-size: 15px; font-weight: 600; font-family: inherit; color: #fff; border-radius: 12px;
+    background: linear-gradient(120deg, #4f7cff, #ff4fa0);
+  }}
+  /* Once enhanced, the SVG replaces the native controls entirely. */
+  .ci-host input {{ border: none !important; border-radius: 0 !important; }}
+
+  .hero-form {{
+    margin-top: 20px; transform: translateZ(34px);
+    display: flex; flex-direction: column; gap: 10px;
+  }}
+  .hero-form .row {{ display: flex; gap: 10px; }}
+  .hero-form .row > * {{ flex: 1; min-width: 0; }}
+  .glass-field {{
+    width: 100%; padding: 13px 15px; font-size: 15px; font-family: inherit;
+    color: #fff; background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.16); border-radius: 12px;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }}
+  .glass-field::placeholder {{ color: rgba(255,255,255,0.5); }}
+  .glass-field:focus {{
+    outline: none; background: rgba(255,255,255,0.12);
+    border-color: rgba(255,255,255,0.4);
+  }}
+  /* date/time inputs render their icons dark by default — invert on dark glass */
+  .glass-field[type="date"], .glass-field[type="time"] {{ color-scheme: dark; }}
+
+  /* ── Specular edge highlight (see static/specular.js) ──────────────
+     --spec-angle points the streak at the cursor; --spec-on fades the
+     whole effect in as the cursor gets close. Both are set from JS. */
+  .spec {{
+    --spec-angle: 0deg; --spec-on: 0;
+    position: relative; isolation: isolate;
+  }}
+  .spec::after {{
+    content: ""; position: absolute; inset: 0; border-radius: inherit;
+    padding: 1px; pointer-events: none; opacity: var(--spec-on);
+    background: conic-gradient(from var(--spec-angle),
+      transparent 0deg, rgba(255,255,255,0.95) 8deg,
+      transparent 26deg, transparent 180deg,
+      rgba(255,255,255,0.65) 188deg, transparent 206deg, transparent 360deg);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    transition: opacity 0.25s ease;
   }}
   @media (prefers-reduced-motion: reduce) {{
     .hero-video {{ display: none; }}
@@ -360,6 +427,47 @@ def page(title: str, body: str, description: str = None, share_path: str = "/") 
 <main>
 {body}
 </main>
+<script src="/static/ferrofluid-bg.js"></script>
+<script src="/static/specular.js"></script>
+<script src="/static/curved-input.js"></script>
+<script>
+(function () {{
+  // 3D tilt: any .hero inside a .hero-bg-wrap leans toward the cursor, with
+  // its children at different translateZ depths so they part like real layers.
+  var wrap = document.getElementById('heroTilt');
+  if (!wrap) return;
+  var card = wrap.querySelector('.hero');
+  var video = wrap.querySelector('.hero-video');
+  if (!card) return;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  var tx = 0, ty = 0, cx = 0, cy = 0, raf = null;
+  function loop() {{
+    cx += (tx - cx) * 0.09;
+    cy += (ty - cy) * 0.09;
+    card.style.transform =
+      'rotateY(' + (cx * 11).toFixed(2) + 'deg) rotateX(' + (-cy * 9).toFixed(2) + 'deg)';
+    if (video) {{
+      video.style.transform =
+        'scale(1.06) translate(' + (-cx * 12).toFixed(1) + 'px,' + (-cy * 12).toFixed(1) + 'px)';
+    }}
+    if (Math.abs(tx - cx) > 0.001 || Math.abs(ty - cy) > 0.001) raf = requestAnimationFrame(loop);
+    else raf = null;
+  }}
+  function kick() {{ if (!raf) raf = requestAnimationFrame(loop); }}
+
+  wrap.addEventListener('pointermove', function (e) {{
+    // Don't tilt while someone is aiming at a form field — a moving target
+    // is genuinely annoying to tap, especially on a phone.
+    if (e.target.closest('input, textarea, button, a')) {{ tx = 0; ty = 0; kick(); return; }}
+    var r = wrap.getBoundingClientRect();
+    tx = ((e.clientX - r.left) / r.width - 0.5) * 2;
+    ty = ((e.clientY - r.top) / r.height - 0.5) * 2;
+    kick();
+  }});
+  wrap.addEventListener('pointerleave', function () {{ tx = 0; ty = 0; kick(); }});
+}})();
+</script>
 </body>
 </html>"""
     return html_doc.encode("utf-8")
@@ -378,53 +486,24 @@ def route_home(handler):
         <source src="/static/hero.webm" type="video/webm">
         <source src="/static/hero.mp4" type="video/mp4">
       </video>
+      <div class="hero-ferro" data-ferrofluid
+           data-colors="#7aa2ff,#c77dff,#ff5fa8"
+           data-speed="0.4" data-scale="1.7" data-glow="2.1"
+           data-rim-width="0.22" data-sharpness="2.6" data-shimmer="1.4"
+           data-flow-direction="down" data-mouse-radius="0.3"></div>
       <div class="hero-scrim"></div>
       <div class="hero">
         <img src="/static/logo.jpg" alt="Rollcfluence">
         <h2>Never miss<br><span class="grad">another lead.</span></h2>
         <p>Give your customers a booking page they can use in seconds — and see every booking land in one place, the moment it happens.</p>
-        <a class="hero-cta" href="/register">Get your booking link &rarr;</a>
+        <form class="hero-curved" data-curved method="get" action="/register"
+              data-bend="24" data-height="60" data-button-color="#4f7cff">
+          <input name="name" placeholder="Your business name" maxlength="120" aria-label="Your business name">
+          <button type="submit">Get my link</button>
+        </form>
       </div>
       <div class="hero-hint">move your cursor</div>
     </div>
-    <script>
-    (function () {
-      var wrap = document.getElementById('heroTilt');
-      if (!wrap) return;
-      var card = wrap.querySelector('.hero');
-      var video = wrap.querySelector('.hero-video');
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-
-      var tx = 0, ty = 0, cx = 0, cy = 0, raf = null;
-
-      function loop() {
-        // ease toward the target so motion feels weighted, not twitchy
-        cx += (tx - cx) * 0.09;
-        cy += (ty - cy) * 0.09;
-        card.style.transform =
-          'rotateY(' + (cx * 13).toFixed(2) + 'deg) rotateX(' + (-cy * 11).toFixed(2) + 'deg)';
-        if (video) {
-          // background drifts the opposite way for parallax depth
-          video.style.transform =
-            'scale(1.06) translate(' + (-cx * 12).toFixed(1) + 'px,' + (-cy * 12).toFixed(1) + 'px)';
-        }
-        if (Math.abs(tx - cx) > 0.001 || Math.abs(ty - cy) > 0.001) {
-          raf = requestAnimationFrame(loop);
-        } else {
-          raf = null;
-        }
-      }
-      function kick() { if (!raf) raf = requestAnimationFrame(loop); }
-
-      wrap.addEventListener('pointermove', function (e) {
-        var r = wrap.getBoundingClientRect();
-        tx = ((e.clientX - r.left) / r.width - 0.5) * 2;   // -1 .. 1
-        ty = ((e.clientY - r.top) / r.height - 0.5) * 2;
-        kick();
-      });
-      wrap.addEventListener('pointerleave', function () { tx = 0; ty = 0; kick(); });
-    })();
-    </script>
     <div class="card">
       <h2>For businesses</h2>
       <p class="muted">Register your business and get a shareable booking link your customers can use.</p>
@@ -439,15 +518,18 @@ def route_home(handler):
     return page("Home", body)
 
 
-def route_register_form(handler, error=None):
+def route_register_form(handler, error=None, prefill_name=None):
     err_html = f'<p style="color:#b00020;">{html.escape(error)}</p>' if error else ""
+    # The hero's curved input sends the business name here via ?name=…, so
+    # someone who started typing on the home page doesn't have to retype it.
+    prefill = html.escape(prefill_name or "")
     body = f"""
     <div class="card">
       <h2>Register your business</h2>
       {err_html}
       <form method="post" action="/register">
         <label>Business name</label>
-        <input name="name" required maxlength="120">
+        <input name="name" required maxlength="120" value="{prefill}">
         <label>Contact email</label>
         <input name="email" type="email" required maxlength="160">
         <label>Service type</label>
@@ -500,24 +582,36 @@ def route_booking_form(handler, slug, error=None):
     if not biz:
         return page("Not found", '<div class="card"><h2>No such business</h2><p class="muted">This booking link does not exist.</p></div>'), 404
 
-    err_html = f'<p style="color:#b00020;">{html.escape(error)}</p>' if error else ""
+    err_html = (
+        f'<p style="color:#ffb4b4;text-shadow:0 1px 8px rgba(0,0,0,.5);">{html.escape(error)}</p>'
+        if error else ""
+    )
+    # The booking page is what a client's own customers see, so it gets the
+    # full treatment: fluid background, and the heading + fields as one
+    # continuous surface rather than a form boxed inside a card.
     body = f"""
-    <div class="card">
-      <h2>Book an appointment with {html.escape(biz["name"])}</h2>
-      {err_html}
-      <form method="post" action="/book/{html.escape(slug)}">
-        <label>Your name</label>
-        <input name="customer_name" required maxlength="120">
-        <label>Phone or email</label>
-        <input name="customer_contact" required maxlength="160">
-        <label>Preferred date</label>
-        <input name="requested_date" type="date">
-        <label>Preferred time</label>
-        <input name="requested_time" type="time">
-        <label>Note (optional)</label>
-        <textarea name="note" maxlength="500"></textarea>
-        <button type="submit">Request appointment</button>
-      </form>
+    <div class="hero-bg-wrap" id="heroTilt">
+      <div class="hero-ferro" data-ferrofluid
+           data-colors="#7aa2ff,#c77dff,#ff5fa8"
+           data-speed="0.35" data-scale="1.7" data-glow="2.0"
+           data-rim-width="0.22" data-sharpness="2.6" data-shimmer="1.4"
+           data-flow-direction="down" data-mouse-radius="0.3"></div>
+      <div class="hero-scrim"></div>
+      <div class="hero">
+        <h2>Book with<br><span class="grad">{html.escape(biz["name"])}</span></h2>
+        <p>Pick a time that works for you — it takes about thirty seconds.</p>
+        {err_html}
+        <form method="post" action="/book/{html.escape(slug)}" class="hero-form">
+          <input class="glass-field spec" name="customer_name" required maxlength="120" placeholder="Your name">
+          <input class="glass-field spec" name="customer_contact" required maxlength="160" placeholder="Phone or email">
+          <div class="row">
+            <input class="glass-field spec" name="requested_date" type="date" aria-label="Preferred date">
+            <input class="glass-field spec" name="requested_time" type="time" aria-label="Preferred time">
+          </div>
+          <input class="glass-field spec" name="note" maxlength="500" placeholder="Anything we should know? (optional)">
+          <button class="hero-cta spec" type="submit" style="border:none;cursor:pointer;width:100%;margin-top:4px;">Request appointment</button>
+        </form>
+      </div>
     </div>
     """
     return page(
@@ -784,7 +878,7 @@ class Handler(BaseHTTPRequestHandler):
         elif pathname == "/":
             self._send(route_home(self))
         elif pathname == "/register":
-            self._send(route_register_form(self))
+            self._send(route_register_form(self, prefill_name=params.get("name", [""])[0]))
         elif pathname.startswith("/book/"):
             slug = pathname[len("/book/"):]
             content, status = route_booking_form(self, slug)
