@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: rollcfluence
+    runtime: python
+    plan: free
+    buildCommand: ""
+    startCommand: python3 -u app.py
+    envVars:
+      # Render injects PORT automatically; app.py already reads it.
+      - key: ADMIN_KEY
+        sync: false          # set this yourself in the Render dashboard
+      - key: SITE_URL
+        sync: false          # e.g. https://rollcfluence.onrender.com
+      - key: DB_PATH
+        value: /var/data/booking_hub.db
+    disk:
+      name: rollcfluence-data
+      mountPath: /var/data    # keeps the database when the app restarts
+      sizeGB: 1
