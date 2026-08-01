@@ -105,6 +105,28 @@ def slugify(name: str) -> str:
     return slug
 
 
+def get_or_create_business(name: str, email: str, service_type: str = "") -> dict:
+    """Idempotent registration: if a business with this exact name already
+    exists, return its existing slug instead of creating a duplicate. This
+    lets a landing page safely call the API on every page load without
+    creating a new row each time someone visits."""
+    conn = get_db()
+    existing = conn.execute(
+        "SELECT * FROM businesses WHERE name = ?", (name,)
+    ).fetchone()
+    if existing:
+        conn.close()
+        return {"slug": existing["slug"], "name": existing["name"], "created": False}
+    slug = slugify(name)
+    conn.execute(
+        "INSERT INTO businesses (slug, name, contact_email, service_type, created_at) VALUES (?, ?, ?, ?, ?)",
+        (slug, name, email, service_type, datetime.utcnow().isoformat(timespec="seconds")),
+    )
+    conn.commit()
+    conn.close()
+    return {"slug": slug, "name": name, "created": True}
+
+
 # ─────────────────────────────────────────── Notifications
 
 def notify(subject: str, message: str):
@@ -548,6 +570,60 @@ def route_booking_submit(handler, slug, fields):
     return page("Booked", body), 200
 
 
+# ─────────────────────────────────────────── JSON API
+# These exist so an *external* page — a branded landing page hosted anywhere
+# else on the internet, like Vercel — can register a business and take
+# bookings straight from the visitor's own browser via fetch(), without a
+# human filling in the HTML form on this site by hand. CORS headers (added
+# in the Handler below) are what make that cross-site fetch() call legal;
+# without them, browsers block it silently for security reasons.
+
+def api_register(fields: dict) -> bytes:
+    name = (fields.get("name") or "").strip()
+    email = (fields.get("email") or "").strip()
+    service_type = (fields.get("service_type") or "").strip()
+    if not name:
+        return json.dumps({"error": "name is required"}).encode()
+    result = get_or_create_business(name, email, service_type)
+    if result["created"]:
+        notify("New business registered (via API)", f"{name} ({email or 'no email'}) — slug: {result['slug']}")
+    return json.dumps(result).encode()
+
+
+def api_book(slug: str, fields: dict) -> tuple:
+    conn = get_db()
+    biz = conn.execute("SELECT * FROM businesses WHERE slug = ?", (slug,)).fetchone()
+    if not biz:
+        conn.close()
+        return json.dumps({"error": "no such business"}).encode(), 404
+
+    customer_name = (fields.get("customer_name") or "").strip()
+    customer_contact = (fields.get("customer_contact") or "").strip()
+    requested_date = (fields.get("requested_date") or "").strip()
+    requested_time = (fields.get("requested_time") or "").strip()
+    note = (fields.get("note") or "").strip()
+
+    if not customer_name or not customer_contact:
+        conn.close()
+        return json.dumps({"error": "customer_name and customer_contact are required"}).encode(), 400
+
+    conn.execute(
+        """INSERT INTO bookings
+           (business_id, customer_name, customer_contact, requested_date, requested_time, note, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (biz["id"], customer_name, customer_contact, requested_date, requested_time, note,
+         datetime.utcnow().isoformat(timespec="seconds")),
+    )
+    conn.commit()
+    conn.close()
+
+    notify(
+        f"New booking (via API) — {biz['name']}",
+        f"{customer_name} ({customer_contact}) requested {requested_date or 'no date'} {requested_time or ''}\nNote: {note or '—'}",
+    )
+    return json.dumps({"ok": True, "business": biz["name"]}).encode(), 200
+
+
 def route_dashboard(handler, params):
     key = params.get("key", [""])[0]
     if key != ADMIN_KEY:
@@ -648,6 +724,30 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
+    def _send_json(self, content: bytes, status=200):
+        # Wide-open CORS on purpose: /api/* only ever registers a business or
+        # takes a booking — both safe, low-risk, rate-limitable-later actions
+        # — and this API is designed to be called from landing pages hosted
+        # on other domains (e.g. a client's Vercel site), which is the whole
+        # point of it existing.
+        self._send(content, status, {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        }, content_type="application/json; charset=utf-8")
+
+    def _read_json(self):
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        ctype = self.headers.get("Content-Type", "")
+        if "application/json" in ctype:
+            try:
+                return json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                return {}
+        parsed = urllib.parse.parse_qs(raw)
+        return {k: v[0] for k, v in parsed.items()}
+
     def _send_static(self, filename: str):
         # Only ever serve a small allow-listed set of files from STATIC_DIR —
         # never build a generic file server out of this.
@@ -697,8 +797,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         pathname = parsed.path
-        fields = self._read_form()
 
+        # JSON API — used by externally-hosted branded pages, not by the
+        # HTML forms on this site (those use do_POST's form branches below).
+        if pathname == "/api/register":
+            self._send_json(api_register(self._read_json()))
+            return
+        elif pathname.startswith("/api/book/"):
+            slug = pathname[len("/api/book/"):]
+            content, status = api_book(slug, self._read_json())
+            self._send_json(content, status)
+            return
+
+        fields = self._read_form()
         if pathname == "/register":
             self._send(route_register_submit(self, fields))
         elif pathname.startswith("/book/"):
@@ -707,6 +818,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send(content, status)
         else:
             self._send(page("Not found", '<div class="card">404</div>'), 404)
+
+    def do_OPTIONS(self):
+        # Browsers send this "preflight" check before a cross-site fetch()
+        # POST is allowed to actually go through. Without answering it,
+        # every /api/ call from an external landing page would silently fail.
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            self._send_json(b"")
+        else:
+            self.send_response(204)
+            self.end_headers()
 
 
 def main():
