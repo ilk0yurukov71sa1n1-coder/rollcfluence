@@ -246,6 +246,36 @@ def page(title: str, body: str, description: str = None, share_path: str = "/") 
     position: absolute; inset: 0; z-index: 1; pointer-events: auto;
     mix-blend-mode: screen; opacity: 0.95;
   }}
+  /* ElasticMesh — the warping sheet used behind booking pages */
+  .hero-mesh {{
+    position: absolute; inset: 0; z-index: 1; touch-action: none;
+  }}
+  .hero-mesh canvas {{ display: block; width: 100%; height: 100%; }}
+
+  /* ── DepthText ── */
+  .depth-text {{ display: inline-block; perspective: 900px; perspective-origin: 50% 48%; isolation: isolate; }}
+  .depth-stage {{
+    position: relative; display: inline-grid; place-items: center;
+    transform-style: preserve-3d; transform-origin: 50% 50%; will-change: transform;
+  }}
+  .depth-layer, .depth-face {{
+    grid-area: 1 / 1; display: inline-block;
+    font-size: clamp(2.6rem, 13vw, 4.4rem); font-weight: 900; line-height: 0.86;
+    letter-spacing: -0.065em; white-space: nowrap; user-select: none;
+    transform-style: preserve-3d; backface-visibility: hidden; text-rendering: geometricPrecision;
+  }}
+  .depth-layer {{
+    position: absolute; inset: 0; z-index: 0;
+    filter: saturate(0.95) brightness(0.92); pointer-events: none;
+  }}
+  .depth-face {{
+    position: relative; z-index: 1; color: #f8fafc; transform: translateZ(0.6px);
+    text-shadow: 0 22px 34px rgba(124,58,237,0.36), 0 4px 8px rgba(0,0,0,0.3);
+  }}
+  .who {{
+    margin: 14px 0 6px; font-size: 21px; font-weight: 600;
+    letter-spacing: -0.3px; color: #fff; text-shadow: 0 2px 14px rgba(0,0,0,0.45);
+  }}
   /* Darkened + vignetted so light text reads cleanly on top */
   .hero-scrim {{
     position: absolute; inset: 0; z-index: 2; pointer-events: none;
@@ -318,6 +348,81 @@ def page(title: str, body: str, description: str = None, share_path: str = "/") 
   }}
   /* Once enhanced, the SVG replaces the native controls entirely. */
   .ci-host input {{ border: none !important; border-radius: 0 !important; }}
+
+  /* ── Booking page: avatar, day pills, time slots ────────────────── */
+  .biz-avatar {{
+    width: 64px; height: 64px; border-radius: 20px; margin: 0 auto 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; font-weight: 700; color: #fff; letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #4f7cff, #ff4fa0);
+    box-shadow: 0 10px 30px rgba(120,60,220,0.4);
+    transform: translateZ(56px);
+  }}
+  .step-label {{
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase;
+    color: rgba(255,255,255,0.55); margin: 20px 0 10px; text-align: left;
+  }}
+  .step-label span.n {{
+    width: 19px; height: 19px; border-radius: 50%; flex-shrink: 0;
+    background: rgba(255,255,255,0.14); color: #fff;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; letter-spacing: 0;
+  }}
+  .step-label.done span.n {{ background: linear-gradient(135deg,#4f7cff,#ff4fa0); }}
+
+  .day-scroll {{
+    display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px;
+    scrollbar-width: none; -ms-overflow-style: none;
+  }}
+  .day-scroll::-webkit-scrollbar {{ display: none; }}
+  .day-pill {{
+    flex: 0 0 auto; min-width: 60px; padding: 10px 6px; border-radius: 14px;
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14);
+    color: #fff; cursor: pointer; text-align: center; font-family: inherit;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+  }}
+  .day-pill:hover {{ background: rgba(255,255,255,0.13); }}
+  .day-pill .dow {{ display: block; font-size: 10.5px; opacity: 0.66; letter-spacing: 0.5px; text-transform: uppercase; }}
+  .day-pill .dnum {{ display: block; font-size: 18px; font-weight: 600; margin-top: 3px; }}
+  .day-pill.sel {{
+    background: linear-gradient(135deg, rgba(79,124,255,0.9), rgba(255,79,160,0.9));
+    border-color: rgba(255,255,255,0.5); transform: translateY(-2px);
+    box-shadow: 0 8px 22px rgba(120,60,220,0.4);
+  }}
+
+  .slot-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }}
+  .slot {{
+    padding: 11px 4px; border-radius: 11px; font-size: 13.5px; font-weight: 500;
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14);
+    color: #fff; cursor: pointer; font-family: inherit;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+  }}
+  .slot:hover {{ background: rgba(255,255,255,0.13); }}
+  .slot.sel {{
+    background: linear-gradient(135deg, rgba(79,124,255,0.9), rgba(255,79,160,0.9));
+    border-color: rgba(255,255,255,0.5); transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(120,60,220,0.38);
+  }}
+  @media (max-width: 420px) {{ .slot-grid {{ grid-template-columns: repeat(3, 1fr); }} }}
+
+  .hero-cta:disabled {{ opacity: 0.4; cursor: not-allowed; box-shadow: none; filter: none; }}
+
+  /* Staggered entrance so the page assembles itself rather than snapping in */
+  .rise {{ opacity: 0; transform: translateY(14px); animation: rise 0.65s cubic-bezier(.2,.7,.3,1) forwards; }}
+  @keyframes rise {{ to {{ opacity: 1; transform: translateY(0); }} }}
+  @media (prefers-reduced-motion: reduce) {{ .rise {{ animation: none; opacity: 1; transform: none; }} }}
+
+  .done-check {{
+    width: 62px; height: 62px; border-radius: 50%; margin: 0 auto 16px;
+    background: linear-gradient(135deg, #35d07f, #16a765);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 10px 30px rgba(30,180,110,0.4);
+    animation: pop 0.5s cubic-bezier(.2,1.4,.4,1) forwards;
+  }}
+  @keyframes pop {{ from {{ transform: scale(0.4); opacity: 0; }} to {{ transform: scale(1); opacity: 1; }} }}
 
   .hero-form {{
     margin-top: 20px; transform: translateZ(34px);
@@ -428,6 +533,8 @@ def page(title: str, body: str, description: str = None, share_path: str = "/") 
 {body}
 </main>
 <script src="/static/ferrofluid-bg.js"></script>
+<script src="/static/elastic-mesh.js"></script>
+<script src="/static/depth-text.js"></script>
 <script src="/static/specular.js"></script>
 <script src="/static/curved-input.js"></script>
 <script>
@@ -589,29 +696,114 @@ def route_booking_form(handler, slug, error=None):
     # The booking page is what a client's own customers see, so it gets the
     # full treatment: fluid background, and the heading + fields as one
     # continuous surface rather than a form boxed inside a card.
+    initial = html.escape(biz["name"].strip()[:1].upper() or "?")
     body = f"""
     <div class="hero-bg-wrap" id="heroTilt">
-      <div class="hero-ferro" data-ferrofluid
-           data-colors="#7aa2ff,#c77dff,#ff5fa8"
-           data-speed="0.35" data-scale="1.7" data-glow="2.0"
-           data-rim-width="0.22" data-sharpness="2.6" data-shimmer="1.4"
-           data-flow-direction="down" data-mouse-radius="0.3"></div>
+      <div class="hero-mesh" data-elastic-mesh
+           data-color1="#4f7cff" data-color2="#ff4fa0"
+           data-grid-density="18" data-grid-opacity="0.26" data-shading="0.75"
+           data-tilt="12" data-pull="0.55" data-wobble="5.5" data-border-radius="26"></div>
       <div class="hero-scrim"></div>
       <div class="hero">
-        <h2>Book with<br><span class="grad">{html.escape(biz["name"])}</span></h2>
-        <p>Pick a time that works for you — it takes about thirty seconds.</p>
+        <div class="biz-avatar rise" style="animation-delay:.05s">{initial}</div>
+        <span class="rise" data-depth-text="Book" data-face="#f8fafc" data-deep="#7c3aed"
+              data-layers="28" data-depth="2.4" data-tilt="7.5" style="animation-delay:.12s"></span>
+        <h2 class="who rise" style="animation-delay:.18s">{html.escape(biz["name"])}</h2>
+        <p class="rise" style="animation-delay:.24s">Pick a day and a time — it takes about thirty seconds.</p>
         {err_html}
-        <form method="post" action="/book/{html.escape(slug)}" class="hero-form">
-          <input class="glass-field spec" name="customer_name" required maxlength="120" placeholder="Your name">
-          <input class="glass-field spec" name="customer_contact" required maxlength="160" placeholder="Phone or email">
-          <div class="row">
-            <input class="glass-field spec" name="requested_date" type="date" aria-label="Preferred date">
-            <input class="glass-field spec" name="requested_time" type="time" aria-label="Preferred time">
+        <form method="post" action="/book/{html.escape(slug)}" class="hero-form" id="bookForm">
+          <div class="rise" style="animation-delay:.28s">
+            <div class="step-label" id="lbl1"><span class="n">1</span> Choose a day</div>
+            <div class="day-scroll" id="dayScroll"></div>
           </div>
-          <input class="glass-field spec" name="note" maxlength="500" placeholder="Anything we should know? (optional)">
-          <button class="hero-cta spec" type="submit" style="border:none;cursor:pointer;width:100%;margin-top:4px;">Request appointment</button>
+          <div class="rise" style="animation-delay:.36s">
+            <div class="step-label" id="lbl2"><span class="n">2</span> Choose a time</div>
+            <div class="slot-grid" id="slotGrid"></div>
+          </div>
+          <div class="rise" style="animation-delay:.44s">
+            <div class="step-label" id="lbl3"><span class="n">3</span> Your details</div>
+            <input class="glass-field spec" name="customer_name" id="cname" required maxlength="120" placeholder="Your name">
+            <input class="glass-field spec" name="customer_contact" id="ccontact" required maxlength="160" placeholder="Phone or email" style="margin-top:10px;">
+            <input class="glass-field spec" name="note" maxlength="500" placeholder="Anything we should know? (optional)" style="margin-top:10px;">
+          </div>
+          <input type="hidden" name="requested_date" id="reqDate">
+          <input type="hidden" name="requested_time" id="reqTime">
+          <button class="hero-cta spec rise" id="submitBtn" type="submit" disabled
+                  style="animation-delay:.52s;border:none;width:100%;margin-top:14px;">Request appointment</button>
         </form>
       </div>
+      <script>
+      (function () {{
+        // Days and slots are generated in the visitor's own timezone, so
+        // "Tue 12" always means their Tuesday, not the server's.
+        var DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        var dayScroll = document.getElementById('dayScroll');
+        var slotGrid  = document.getElementById('slotGrid');
+        var reqDate   = document.getElementById('reqDate');
+        var reqTime   = document.getElementById('reqTime');
+        var btn       = document.getElementById('submitBtn');
+        var cname     = document.getElementById('cname');
+        var ccontact  = document.getElementById('ccontact');
+        if (!dayScroll) return;
+
+        function pad(n) {{ return (n < 10 ? '0' : '') + n; }}
+
+        // Next 14 days, skipping today once it's late enough that same-day
+        // booking is unrealistic for most businesses.
+        var start = new Date();
+        if (start.getHours() >= 17) start.setDate(start.getDate() + 1);
+        for (var i = 0; i < 14; i++) {{
+          var d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'day-pill';
+          b.dataset.date = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+          b.innerHTML = '<span class="dow">' + DOW[d.getDay()] + '</span><span class="dnum">' + d.getDate() + '</span>';
+          b.addEventListener('click', function () {{
+            var prev = dayScroll.querySelector('.sel');
+            if (prev) prev.classList.remove('sel');
+            this.classList.add('sel');
+            reqDate.value = this.dataset.date;
+            document.getElementById('lbl1').classList.add('done');
+            check();
+          }});
+          dayScroll.appendChild(b);
+        }}
+
+        // 09:00–18:00, every 30 minutes.
+        for (var h = 9; h <= 17; h++) {{
+          for (var m = 0; m < 60; m += 30) {{
+            var t = pad(h) + ':' + pad(m);
+            var s = document.createElement('button');
+            s.type = 'button';
+            s.className = 'slot';
+            s.dataset.time = t;
+            s.textContent = t;
+            s.addEventListener('click', function () {{
+              var prev = slotGrid.querySelector('.sel');
+              if (prev) prev.classList.remove('sel');
+              this.classList.add('sel');
+              reqTime.value = this.dataset.time;
+              document.getElementById('lbl2').classList.add('done');
+              check();
+            }});
+            slotGrid.appendChild(s);
+          }}
+        }}
+
+        function check() {{
+          var ok = reqDate.value && reqTime.value &&
+                   cname.value.trim() && ccontact.value.trim();
+          btn.disabled = !ok;
+          document.getElementById('lbl3').classList.toggle('done',
+            !!(cname.value.trim() && ccontact.value.trim()));
+        }}
+        cname.addEventListener('input', check);
+        ccontact.addEventListener('input', check);
+
+        if (window.__specBind) window.__specBind();
+      }})();
+      </script>
     </div>
     """
     return page(
@@ -655,10 +847,34 @@ def route_booking_submit(handler, slug, fields):
         f"{customer_name} ({customer_contact}) requested {requested_date or 'no date'} {requested_time or ''}\nNote: {note or '—'}",
     )
 
+    # Confirmation gets the same fluid treatment — the last thing a customer
+    # sees shouldn't drop back to a plain white box.
+    when = ""
+    if requested_date:
+        when = requested_date + (f" at {requested_time}" if requested_time else "")
+    when_html = (
+        f'<p class="rise" style="animation-delay:.24s"><strong>{html.escape(when)}</strong></p>'
+        if when else ""
+    )
     body = f"""
-    <div class="card success">
-      <h2>Request received</h2>
-      <p>{html.escape(biz['name'])} will confirm your appointment shortly.</p>
+    <div class="hero-bg-wrap" id="heroTilt">
+      <div class="hero-ferro" data-ferrofluid
+           data-colors="#7aa2ff,#c77dff,#ff5fa8"
+           data-speed="0.3" data-scale="1.7" data-glow="2.0"
+           data-rim-width="0.22" data-sharpness="2.6" data-shimmer="1.4"
+           data-flow-direction="down" data-mouse-radius="0.3"></div>
+      <div class="hero-scrim"></div>
+      <div class="hero">
+        <div class="done-check">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none"
+               stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 6L9 17l-5-5"/>
+          </svg>
+        </div>
+        <h2 class="rise" style="animation-delay:.1s">Request<br><span class="grad">received.</span></h2>
+        {when_html}
+        <p class="rise" style="animation-delay:.32s">{html.escape(biz['name'])} will confirm your appointment shortly.</p>
+      </div>
     </div>
     """
     return page("Booked", body), 200
