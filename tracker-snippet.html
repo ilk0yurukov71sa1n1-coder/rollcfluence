@@ -1,0 +1,151 @@
+<!-- ─── Rollcfluence page analytics ─────────────────────────────────────────
+     Paste this block once, just before </head>, on any client page that
+     already talks to the Rollcfluence backend. It needs no configuration:
+     it learns the business slug from the /api/register response the page
+     already makes, and detects bookings by watching the /api/book/ call.
+
+     It must sit ABOVE the page's own <script>, because it works by wrapping
+     fetch() before the page uses it. In <head> is the safe place. If you
+     ever must put it lower, set window.RC_SLUG = "<slug>" in the page and
+     this block will pick that up instead.
+
+     What it records: page views, clicks (as a percentage of the page, so
+     every screen size lands on the same map), which form field was touched,
+     scroll depth, and how long the visit lasted.
+     What it never records: cookies, IP addresses, user agents, names, or
+     anything typed into the form. Only *which* field was focused, never its
+     contents. That is what keeps clients free of consent banners.
+─────────────────────────────────────────────────────────────────────────── -->
+<script>
+(function () {
+  "use strict";
+  var API = "https://rollcfluence.onrender.com";   // same backend as the booking call
+
+  var slug = null,                                  // learned from /api/register
+      sid = Math.random().toString(36).slice(2) + Date.now().toString(36),
+      t0 = Date.now(),
+      queue = [],
+      sent = 0,
+      maxScroll = 0,
+      exited = false;
+
+  function now() { return Date.now() - t0; }
+
+  function track(type, extra) {
+    if (sent > 300) return;
+    var ev = { type: type, ms: now() };
+    if (extra) for (var k in extra) ev[k] = extra[k];
+    queue.push(ev);
+    if (queue.length >= 10) flush();
+  }
+
+  function flush() {
+    if (!slug) return;                               // hold events until the slug is known
+    while (queue.length) {
+      var batch = queue.slice(0, 60);
+      queue = queue.slice(60);
+      sent += batch.length;
+      var body = JSON.stringify({
+        sid: sid, w: innerWidth, h: innerHeight,
+        ref: document.referrer, events: batch
+      });
+      // text/plain on purpose: any other content type makes the browser send a
+      // CORS preflight, and preflights fired while the tab is closing get lost.
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(API + "/api/track/" + slug, body);
+        } else {
+          realFetch(API + "/api/track/" + slug, { method: "POST", body: body, keepalive: true });
+        }
+      } catch (e) { /* analytics must never break the page */ }
+    }
+  }
+
+  // ── Learn the slug, and catch the booking, by watching the calls the page
+  //    already makes. This is what makes the block paste-and-forget.
+  var realFetch = window.fetch;
+  window.fetch = function (input, init) {
+    var url = (typeof input === "string" ? input : (input && input.url)) || "";
+    var isBook = url.indexOf("/api/book/") !== -1;
+    if (isBook) track("submit");
+    return realFetch.apply(this, arguments).then(function (res) {
+      try {
+        if (url.indexOf("/api/register") !== -1) {
+          res.clone().json().then(function (d) {
+            if (d && d.slug) { slug = d.slug; flush(); }
+          }).catch(function () {});
+        } else if (isBook) {
+          res.clone().json().then(function (d) {
+            if (d && d.ok) { track("success"); flush(); }
+          }).catch(function () {});
+        }
+      } catch (e) {}
+      return res;
+    });
+  };
+
+  // ── What the visitor does
+  addEventListener("click", function (e) {
+    var t = e.target || {};
+    var name = t.id || t.name || (t.getAttribute && t.getAttribute("data-track")) ||
+               (t.tagName === "BUTTON" || t.tagName === "A" ? (t.textContent || "").trim().slice(0, 30) : "") ||
+               (t.tagName || "").toLowerCase();
+    var pageH = Math.max(document.body.scrollHeight, innerHeight);
+    track("click", {
+      x: +(e.clientX / innerWidth * 100).toFixed(2),
+      y: +((e.clientY + (window.scrollY || 0)) / pageH * 100).toFixed(2),
+      el: String(name).slice(0, 40)
+    });
+  }, true);
+
+  function watchFields() {
+    var fields = document.querySelectorAll("input, select, textarea");
+    for (var i = 0; i < fields.length; i++) {
+      (function (f) {
+        if (f.__rcWatched) return;
+        f.__rcWatched = true;
+        f.addEventListener("focus", function () {
+          track("focus", { el: (f.name || f.id || f.type || "field").slice(0, 40) });
+        }, { once: true });
+      })(fields[i]);
+    }
+  }
+  watchFields();
+  // Fields that appear later (a 3D card flipping over, a step-2 panel) get watched too.
+  if (window.MutationObserver) {
+    new MutationObserver(watchFields).observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  addEventListener("scroll", function () {
+    var pageH = Math.max(document.body.scrollHeight - innerHeight, 1);
+    var depth = Math.min(100, (window.scrollY || 0) / pageH * 100);
+    if (depth > maxScroll + 5) { maxScroll = depth; }
+  }, { passive: true });
+
+  // Send the tail of the visit. Re-armed if the visitor comes back to the tab,
+  // so a phone call in the middle of booking doesn't end the recording.
+  function sendExit() {
+    if (exited) return;
+    exited = true;
+    if (maxScroll > 0) queue.push({ type: "scroll", y: +maxScroll.toFixed(1), ms: now() });
+    queue.push({ type: "exit", ms: now() });
+    flush();
+  }
+  addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") sendExit();
+    else exited = false;
+  });
+  addEventListener("pagehide", sendExit);
+
+  // Fallback for pages that set the slug themselves rather than letting the
+  // fetch wrapper discover it.
+  var watch = setInterval(function () {
+    if (!slug && window.RC_SLUG) { slug = String(window.RC_SLUG); flush(); }
+    if (slug) clearInterval(watch);
+  }, 400);
+  setTimeout(function () { clearInterval(watch); }, 30000);
+
+  track("view");
+  setTimeout(flush, 4000);          // don't wait for 10 events on a quiet visit
+})();
+</script>
