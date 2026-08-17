@@ -59,6 +59,10 @@ MAX_EVENTS_PER_REQUEST = 60
 # Raw events older than this are deleted. Ninety days is plenty to show a
 # client a trend, and keeps the free-tier disk from ever filling up.
 EVENT_RETENTION_DAYS = int(os.environ.get("EVENT_RETENTION_DAYS", 90))
+# How recently a session must have pinged to count as "on the page right now".
+# The tracker heartbeats every 20s, so this has to sit comfortably above that
+# or live visitors would flicker in and out between dashboard polls.
+LIVE_WINDOW_SECONDS = int(os.environ.get("LIVE_WINDOW_SECONDS", 75))
 
 BRAND_PURPLE = "#4B1E73"
 BRAND_PURPLE_LIGHT = "#6A2C8C"
@@ -985,7 +989,12 @@ FUNNEL_STAGES = [
     ("submit", "Pressed Book"),
     ("success", "Booking confirmed"),
 ]
-ALLOWED_EVENT_TYPES = {"view", "click", "scroll", "focus", "submit", "success", "exit"}
+ALLOWED_EVENT_TYPES = {"view", "click", "scroll", "focus", "submit", "success", "exit",
+                       # "hb" is a 20-second heartbeat — the only way to know a tab is
+                       # still open, and so the only way "live now" can exist at all.
+                       # "rage" is three-plus clicks in one spot inside a second: a
+                       # visitor jabbing at something that is not reacting.
+                       "hb", "rage"}
 
 
 def _device_from_width(w) -> str:
@@ -1320,6 +1329,238 @@ def api_stats(slug: str, params: dict) -> tuple:
     data = stats_for(slug, days)
     status = 404 if data.get("error") else 200
     return json.dumps(data).encode(), status
+
+
+def _live_sessions(conn, live_since: str, business_id=None) -> dict:
+    """business_id -> set of session ids that are still on a page.
+
+    "Still on a page" means: pinged inside the live window, and the newest thing
+    that session did was not leaving. A tab switched away fires `exit`, so
+    without that second half a phone put in a pocket would show as a live
+    visitor for another minute. Both /api/businesses and /api/live count
+    through here so the number on the client list can never disagree with the
+    number on that client's own page — the window is 75 seconds, so this reads
+    a handful of rows and reducing it in Python costs nothing."""
+    sql = ("SELECT business_id, session_id, type FROM events "
+           "WHERE created_at >= ?")
+    args = [live_since]
+    if business_id is not None:
+        sql += " AND business_id = ?"
+        args.append(business_id)
+    sql += " ORDER BY id"
+
+    last = {}
+    for r in conn.execute(sql, args):
+        last[(r["business_id"], r["session_id"])] = r["type"]
+
+    out = {}
+    for (bid, sid), etype in last.items():
+        if etype == "exit":
+            continue
+        out.setdefault(bid, set()).add(sid)
+    return out
+
+
+def api_businesses(params: dict) -> tuple:
+    """Every client with a scorecard attached, so one call can draw the
+    "all my clients, ranked by conversion" table. Key-protected: this is the
+    entire customer list, which is more sensitive than any single page's stats.
+
+    `tracked` is the one field worth explaining. It is False when a business
+    has never sent a single event, which means its page is live but the tracker
+    was never put on it. That is the list of jobs still to do."""
+    if params.get("key", [""])[0] != ADMIN_KEY:
+        return json.dumps({"error": "unauthorized"}).encode(), 401
+    try:
+        days = max(1, min(365, int(params.get("days", ["30"])[0])))
+    except ValueError:
+        days = 30
+
+    now = datetime.utcnow()
+    since = (now - timedelta(days=days)).isoformat(timespec="seconds")
+    live_since = (now - timedelta(seconds=LIVE_WINDOW_SECONDS)).isoformat(timespec="seconds")
+
+    conn = get_db()
+    try:
+        def grouped(sql, args):
+            return {r["business_id"]: r["c"] for r in conn.execute(sql, args)}
+
+        views = grouped(
+            "SELECT business_id, COUNT(DISTINCT session_id) c FROM events "
+            "WHERE type = 'view' AND created_at >= ? GROUP BY business_id", (since,))
+        wins = grouped(
+            "SELECT business_id, COUNT(DISTINCT session_id) c FROM events "
+            "WHERE type = 'success' AND created_at >= ? GROUP BY business_id", (since,))
+        live = {k: len(v) for k, v in _live_sessions(conn, live_since).items()}
+        booked = grouped(
+            "SELECT business_id, COUNT(*) c FROM bookings "
+            "WHERE created_at >= ? GROUP BY business_id", (since,))
+        ever = {r["business_id"] for r in conn.execute(
+            "SELECT DISTINCT business_id FROM events")}
+
+        out = []
+        for b in conn.execute(
+                "SELECT id, slug, name, service_type, created_at FROM businesses "
+                "ORDER BY name COLLATE NOCASE"):
+            v = views.get(b["id"], 0)
+            s = wins.get(b["id"], 0)
+            out.append({
+                "slug": b["slug"],
+                "name": b["name"],
+                "service_type": b["service_type"] or "",
+                "created_at": b["created_at"],
+                "views": v,
+                "conversions": s,
+                "bookings_recorded": booked.get(b["id"], 0),
+                "conversion_pct": _pct(s, v),
+                "live_now": live.get(b["id"], 0),
+                "tracked": b["id"] in ever,
+            })
+        return json.dumps({"businesses": out, "days": days}).encode(), 200
+    except Exception as e:
+        print(f"[analytics] businesses failed: {e}", flush=True)
+        return json.dumps({"error": "server error"}).encode(), 500
+    finally:
+        conn.close()
+
+
+_LIVE_STAGES = ["view", "scroll", "click", "focus", "submit", "success"]
+_LIVE_STAGE_LABEL = {
+    "view": "just landed",
+    "scroll": "reading the page",
+    "click": "clicking around",
+    "focus": "filling the form",
+    "submit": "pressed Book",
+    "success": "booked",
+    "rage": "jabbing at something",
+}
+
+
+def api_live(slug: str, params: dict) -> tuple:
+    """Who is on the page right now, what they are doing, and the last half
+    hour of activity as a stream. Polled every few seconds by the dashboard,
+    so every query here is indexed and bounded — this must stay cheap."""
+    if params.get("key", [""])[0] != ADMIN_KEY:
+        return json.dumps({"error": "unauthorized"}).encode(), 401
+
+    conn = get_db()
+    try:
+        biz = conn.execute(
+            "SELECT id, name FROM businesses WHERE slug = ?", (slug,)).fetchone()
+        if not biz:
+            return json.dumps({"error": "no such business"}).encode(), 404
+
+        now = datetime.utcnow()
+        live_since = (now - timedelta(seconds=LIVE_WINDOW_SECONDS)).isoformat(timespec="seconds")
+        feed_since = (now - timedelta(minutes=30)).isoformat(timespec="seconds")
+        day_since = (now - timedelta(hours=24)).isoformat(timespec="seconds")
+
+        def ago(stamp):
+            try:
+                return max(0, int((now - datetime.fromisoformat(stamp)).total_seconds()))
+            except (TypeError, ValueError):
+                return None
+
+        # ── Who is here now. One row per session: its newest event wins.
+        by_sid = {}
+        for r in conn.execute(
+                "SELECT session_id, type, element, ms, device, referrer, created_at "
+                "FROM events WHERE business_id = ? AND created_at >= ? ORDER BY id",
+                (biz["id"], live_since)):
+            cur = by_sid.setdefault(r["session_id"], {
+                "device": r["device"] or "unknown",
+                "referrer": r["referrer"] or "direct",
+                "seconds": 0, "types": set(), "last": "view", "element": None,
+                "last_seen": r["created_at"],
+            })
+            cur["types"].add(r["type"])
+            cur["last_seen"] = r["created_at"]
+            if r["ms"]:
+                cur["seconds"] = max(cur["seconds"], int(r["ms"] / 1000))
+            if r["type"] != "hb":                # a heartbeat is not an action
+                cur["last"] = r["type"]
+                cur["element"] = r["element"]
+
+        still_here = _live_sessions(conn, live_since, biz["id"]).get(biz["id"], set())
+        visitors = []
+        for sid, v in by_sid.items():
+            if sid not in still_here:
+                continue                          # tab closed or switched away
+            stage = "view"
+            for s in _LIVE_STAGES:
+                if s in v["types"]:
+                    stage = s
+            visitors.append({
+                "id": sid[-4:],                   # enough to tell two people apart
+                "device": v["device"],
+                "referrer": v["referrer"],
+                "seconds": v["seconds"],
+                "stage": stage,
+                "doing": _LIVE_STAGE_LABEL.get(v["last"], v["last"]),
+                "element": v["element"],
+                "idle": ago(v["last_seen"]),
+            })
+        visitors.sort(key=lambda x: -x["seconds"])
+
+        # ── The stream: what happened in the last half hour, newest first.
+        feed = [{
+            "type": r["type"],
+            "element": r["element"],
+            "device": r["device"],
+            "who": (r["session_id"] or "")[-4:],
+            "ago": ago(r["created_at"]),
+        } for r in conn.execute(
+            "SELECT session_id, type, element, device, created_at FROM events "
+            "WHERE business_id = ? AND created_at >= ? AND type != 'hb' "
+            # created_at first, not id: events arrive in batches, so a beacon
+            # sent late can carry a row that happened earlier than one already
+            # stored. Ordering by id would show them out of sequence.
+            "ORDER BY created_at DESC, id DESC LIMIT 60", (biz["id"], feed_since))]
+
+        # ── Pulse: events per minute for the last 30 minutes, oldest first,
+        #    always 30 buckets so the sparkline never changes width.
+        buckets = {}
+        for r in conn.execute(
+                "SELECT created_at FROM events WHERE business_id = ? AND created_at >= ?",
+                (biz["id"], feed_since)):
+            a = ago(r["created_at"])
+            if a is not None:
+                buckets[min(29, a // 60)] = buckets.get(min(29, a // 60), 0) + 1
+        pulse = [buckets.get(29 - i, 0) for i in range(30)]
+
+        def count(sql, args):
+            return conn.execute(sql, args).fetchone()["c"]
+
+        today = {
+            "views": count("SELECT COUNT(DISTINCT session_id) c FROM events "
+                           "WHERE business_id = ? AND type = 'view' AND created_at >= ?",
+                           (biz["id"], day_since)),
+            "bookings": count("SELECT COUNT(DISTINCT session_id) c FROM events "
+                              "WHERE business_id = ? AND type = 'success' AND created_at >= ?",
+                              (biz["id"], day_since)),
+            "clicks": count("SELECT COUNT(*) c FROM events "
+                            "WHERE business_id = ? AND type = 'click' AND created_at >= ?",
+                            (biz["id"], day_since)),
+            "rage": count("SELECT COUNT(*) c FROM events "
+                          "WHERE business_id = ? AND type = 'rage' AND created_at >= ?",
+                          (biz["id"], day_since)),
+        }
+
+        return json.dumps({
+            "business": biz["name"], "slug": slug,
+            "live_now": len(visitors),
+            "visitors": visitors[:40],
+            "feed": feed,
+            "pulse": pulse,
+            "today": today,
+            "window_seconds": LIVE_WINDOW_SECONDS,
+            "server_time": now.isoformat(timespec="seconds") + "Z",
+        }).encode(), 200
+    except Exception as e:
+        print(f"[analytics] live failed: {e}", flush=True)
+        return json.dumps({"error": "server error"}).encode(), 500
+    finally:
+        conn.close()
 
 
 # ─────────────────────────────────────────── Analytics: the dashboard
@@ -2035,7 +2276,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send(content, status, {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
+            # X-Admin-Key lets the Vercel-hosted dashboard send the key in a
+            # header instead of the query string, so it never lands in a log.
+            "Access-Control-Allow-Headers": "Content-Type, X-Admin-Key",
         }, content_type="application/json; charset=utf-8")
 
     def _read_json(self):
@@ -2082,6 +2325,27 @@ class Handler(BaseHTTPRequestHandler):
             data = f.read()
         self._send(data, 200, {"Cache-Control": "public, max-age=86400"}, content_type)
 
+    def _send_tracker(self):
+        """Serve static/tracker.js at the short address /t.js.
+
+        A classic <script src> does not need CORS to load cross-origin, but the
+        header is sent anyway so the file can also be fetched and inspected from
+        a client's own tooling. Ten minutes of cache is the deliberate trade:
+        long enough that it costs nothing, short enough that fixing the tracker
+        reaches every client page the same morning without touching one of them."""
+        path = os.path.join(STATIC_DIR, "tracker.js")
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            self._send(b"/* tracker unavailable */", 404,
+                       content_type="application/javascript; charset=utf-8")
+            return
+        self._send(data, 200, {
+            "Cache-Control": "public, max-age=600",
+            "Access-Control-Allow-Origin": "*",
+        }, content_type="application/javascript; charset=utf-8")
+
     def _read_form(self):
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length).decode("utf-8") if length else ""
@@ -2093,8 +2357,19 @@ class Handler(BaseHTTPRequestHandler):
         pathname = parsed.path
         params = urllib.parse.parse_qs(parsed.query)
 
+        # The dashboard prefers to send the admin key in a header so it never
+        # ends up in a server log or a browser history entry. Fold it into
+        # params here, once, and every key-protected route below gets it free.
+        header_key = self.headers.get("X-Admin-Key")
+        if header_key and "key" not in params:
+            params["key"] = [header_key]
+
         if pathname.startswith("/static/"):
             self._send_static(pathname[len("/static/"):])
+        elif pathname == "/t.js":
+            # The tracker, as a file. Short address because clients paste it,
+            # short cache because upgrading it must reach every page that day.
+            self._send_tracker()
         elif pathname == "/":
             self._send(route_home(self))
         elif pathname == "/register":
@@ -2110,6 +2385,13 @@ class Handler(BaseHTTPRequestHandler):
         elif pathname.startswith("/api/stats/"):
             slug = pathname[len("/api/stats/"):]
             content, status = api_stats(slug, params)
+            self._send_json(content, status)
+        elif pathname == "/api/businesses":
+            content, status = api_businesses(params)
+            self._send_json(content, status)
+        elif pathname.startswith("/api/live/"):
+            slug = pathname[len("/api/live/"):]
+            content, status = api_live(slug, params)
             self._send_json(content, status)
         else:
             self._send(page("Not found", '<div class="card">404</div>'), 404)
